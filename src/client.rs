@@ -34,6 +34,7 @@ pub static PREPARED_STATEMENT_COUNTER: Lazy<Arc<AtomicUsize>> =
     Lazy::new(|| Arc::new(AtomicUsize::new(0)));
 
 /// Type of connection received from client.
+#[derive(Debug)]
 enum ClientConnectionType {
     Startup,
     Tls,
@@ -113,6 +114,132 @@ pub struct Client<S, T> {
 
     /// Buffered extended protocol data
     extended_protocol_data_buffer: VecDeque<ExtendedProtocolData>,
+}
+
+pub async fn client_entrypoint_quic(
+    addr: std::net::SocketAddr,
+    mut send: quinn::SendStream,
+    mut recv: quinn::RecvStream,
+    client_server_map: ClientServerMap,
+    shutdown: Receiver<()>,
+    drain: Sender<i32>,
+    admin_only: bool,
+    log_client_connections: bool,
+) -> Result<(), Error> {
+    match get_startup(&mut recv).await {
+        Ok((ClientConnectionType::Startup, bytes)) => {
+            // Continue with regular startup.
+            match Client::startup(
+                &mut recv,
+                &mut send,
+                addr,
+                bytes,
+                client_server_map,
+                shutdown,
+                admin_only,
+            )
+            .await
+            {
+                Ok(mut client) => {
+                    if log_client_connections {
+                        info!("Client {:?} connected (quic)", addr);
+                    } else {
+                        debug!("Client {:?} connected (quic)", addr);
+                    }
+
+                    if !client.is_admin() {
+                        let _ = drain.send(1).await;
+                    }
+
+                    let result = client.handle().await;
+
+                    if !client.is_admin() {
+                        let _ = drain.send(-1).await;
+                    }
+
+                    if result.is_err() {
+                        client.stats.disconnect();
+                    }
+
+                    result
+                }
+                Err(err) => Err(err),
+            }
+        }
+
+        Ok((ClientConnectionType::CancelQuery, bytes)) => {
+            // Continue with cancel query request.
+            match Client::cancel(recv, send, addr, bytes, client_server_map, shutdown).await {
+                Ok(mut client) => {
+                    info!("Client {:?} issued a cancel query request", addr);
+
+                    if !client.is_admin() {
+                        let _ = drain.send(1).await;
+                    }
+
+                    let result = client.handle().await;
+
+                    if !client.is_admin() {
+                        let _ = drain.send(-1).await;
+                    }
+
+                    if result.is_err() {
+                        client.stats.disconnect();
+                    }
+
+                    result
+                }
+
+                Err(err) => Err(err),
+            }
+        }
+        Err(err) => Err(err),
+        _ => Err(Error::SocketError("Client doesn't need TLS on QUIC".into())),
+    }
+}
+pub async fn client_entrypoint_quic_conn(
+    stream: quinn::Incoming,
+    client_server_map: ClientServerMap,
+    shutdown_tx: tokio::sync::broadcast::Sender<()>,
+    drain_tx: Sender<i32>,
+    admin_only: bool,
+    log_client_connections: bool,
+) -> Result<(), Error> {
+    let addr = stream.remote_address();
+    let conn = match stream.await {
+        Ok(stream) => stream,
+        Err(err) => {
+            return Err(Error::SocketError(format!(
+                "Can't connect {}: {}",
+                addr, err
+            )));
+        }
+    };
+
+    loop {
+        match conn.accept_bi().await {
+            Ok((send, recv)) => {
+                let shutdown = shutdown_tx.subscribe();
+                client_entrypoint_quic(
+                    addr,
+                    send,
+                    recv,
+                    client_server_map.clone(),
+                    shutdown,
+                    drain_tx.clone(),
+                    admin_only,
+                    log_client_connections,
+                )
+                .await?;
+            }
+            Err(err) => {
+                return Err(Error::SocketError(format!(
+                    "Can't accept any more streams from {}, {}",
+                    addr, err
+                )));
+            }
+        };
+    }
 }
 
 /// Client entrypoint.
@@ -320,7 +447,7 @@ pub async fn client_entrypoint(
 /// Handle the first message the client sends.
 async fn get_startup<S>(stream: &mut S) -> Result<(ClientConnectionType, BytesMut), Error>
 where
-    S: tokio::io::AsyncRead + std::marker::Unpin + tokio::io::AsyncWrite,
+    S: tokio::io::AsyncRead + std::marker::Unpin,
 {
     // Get startup message length.
     let len = match stream.read_i32().await {

@@ -271,6 +271,12 @@ pub struct General {
     #[serde(default = "General::default_port")]
     pub port: u16,
 
+    #[serde(default = "General::default_quic_host")]
+    pub quic_host: String,
+
+    #[serde(default = "General::default_quic_port")]
+    pub quic_port: u16,
+
     pub enable_prometheus_exporter: Option<bool>,
 
     #[serde(default = "General::default_prometheus_exporter_port")]
@@ -367,6 +373,14 @@ impl General {
         5432
     }
 
+    pub fn default_quic_host() -> String {
+        "0.0.0.0".into()
+    }
+
+    pub fn default_quic_port() -> u16 {
+        5436
+    }
+
     pub fn default_server_lifetime() -> u64 {
         1000 * 60 * 60 // 1 hour
     }
@@ -442,6 +456,8 @@ impl General {
 impl Default for General {
     fn default() -> General {
         General {
+            quic_host: Self::default_quic_host(),
+            quic_port: Self::default_quic_port(),
             host: Self::default_host(),
             port: Self::default_port(),
             enable_prometheus_exporter: Some(false),

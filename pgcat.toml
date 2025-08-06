@@ -65,6 +65,11 @@ tcp_keepalives_interval = 5
 # Path to TLS private key file to use for TLS connections
 # tls_private_key = ".circleci/server.key"
 
+# Path to TLS Certificate file to use for TLS connections
+tls_certificate = "/old-arch/home/ash/Projects/quic-tcp-proxy/certs/cert.pem"
+# Path to TLS private key file to use for TLS connections
+tls_private_key = "/old-arch/home/ash/Projects/quic-tcp-proxy/certs/key.pem"
+
 # Enable/disable server TLS
 server_tls = false
 
@@ -336,7 +341,7 @@ sharding_function = "pg_bigint_hash"
 
 [pools.simple_db.users.0]
 username = "simple_user"
-password = "simple_user"
+password = "simple_password"
 pool_size = 5
 min_pool_size = 3
 server_lifetime = 60000
@@ -347,4 +352,4 @@ servers = [
     [ "127.0.0.1", 5432, "primary" ],
     [ "localhost", 5432, "replica" ]
 ]
-database = "some_db"
+database = "postgres"

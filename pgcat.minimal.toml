@@ -4,19 +4,54 @@
 [general]
 
 host = "0.0.0.0"
-port = 6433
-admin_username = "pgcat"
-admin_password = "pgcat"
+port = 6432
+admin_username = "admin_user"
+admin_password = "admin_pass"
 
-[pools.pgml.users.0]
-username = "postgres"
-password = "postgres"
-pool_size = 10
-min_pool_size = 1
+# Path to TLS Certificate file to use for TLS connections
+tls_certificate = "/old-arch/home/ash/Projects/quic-tcp-proxy/certs/cert.pem"
+# Path to TLS private key file to use for TLS connections
+tls_private_key = "/old-arch/home/ash/Projects/quic-tcp-proxy/certs/key.pem"
+
+server_tls = true
+
+[pools.simple_db]
+prepared_statements = true
+prepared_statements_cache_size = 500
 pool_mode = "transaction"
+default_role = "primary"
+query_parser_enabled = false
+primary_reads_enabled = false
 
-[pools.pgml.shards.0]
-servers = [
-  ["127.0.0.1", 28815, "primary"]
-]
-database = "postgres"
+[pools.simple_db.users.0]
+username = "simple_user"
+password = "simple_password"
+pool_size = 10
+# pool_mode = "transaction"
+
+[pools.simple_db.users.1]
+username = "admin_user"
+password = "admin_pass"
+pool_size = 10
+# pool_mode = "transaction"
+
+[pools.simple_db.shards.0]
+servers = [["127.0.0.1", 5432, "primary"]]
+# database = "postgres"
+database = "simple_db"
+
+
+
+
+# [pools.pgml.users.0]
+# username = "simple_user"
+# password = "simple_password"
+# pool_size = 10
+# min_pool_size = 1
+# pool_mode = "transaction"
+
+# [pools.pgml.shards.0]
+# servers = [
+#   ["127.0.0.1", 5432, "primary"]
+# ]
+# database = "postgres"
