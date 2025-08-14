@@ -46,10 +46,8 @@ static GLOBAL: Jemalloc = Jemalloc;
 
 use log::{debug, error, info, warn};
 use parking_lot::Mutex;
+use pgcat::client::client_entrypoint_quic;
 use pgcat::format_duration;
-use quinn::rustls::pki_types::pem::PemObject;
-use quinn::rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use quinn::TransportConfig;
 use tokio::net::TcpListener;
 #[cfg(not(windows))]
 use tokio::signal::unix::{signal as unix_signal, SignalKind};
@@ -62,7 +60,6 @@ use std::net::SocketAddr;
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::broadcast;
 
 use pgcat::cmd_args;
@@ -140,15 +137,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let quic_addr = format!("{}:{}", config.general.quic_host, config.general.quic_port);
         let mut quic_server = s2n_quic::Server::builder()
             .with_tls((Path::new(certificate), Path::new(private_key))).unwrap()
+            .with_limits(s2n_quic::provider::limits::Limits::new()
+                .with_max_open_local_bidirectional_streams(1000).unwrap()
+                .with_max_open_remote_bidirectional_streams(1000).unwrap()
+            ).unwrap()
             .with_io(quic_addr.as_str()).unwrap().start().unwrap();
-
-        let mut server_config = quinn::ServerConfig::with_single_cert(vec![CertificateDer::from_pem_file(certificate).unwrap()], PrivateKeyDer::from_pem_file(private_key).unwrap()).unwrap();
-
-        let mut transport_config = TransportConfig::default();
-        transport_config.max_idle_timeout(Some(Duration::from_secs(config.general.idle_timeout).try_into().unwrap()));
-
-        server_config.transport = Arc::new(transport_config);
-        let endpoint = quinn::Endpoint::server(server_config, quic_addr.parse().unwrap()).unwrap();
 
 
         let listener = match TcpListener::bind(&addr).await {
@@ -286,137 +279,60 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     break;
                 },
 
-                new_client = endpoint.accept() => {
-                    let incoming = match new_client {
-                        Some(incoming) => incoming,
+                new_conn = quic_server.accept() => {
+                    let mut connection = match new_conn {
+                        Some(conn) => conn,
                         None => {
                             continue;
-                        }
+                        },
                     };
-
-                    let addr = incoming.remote_address();
-
+                    let shutdown_tx = shutdown_tx.clone();
                     let drain_tx = drain_tx.clone();
                     let client_server_map = client_server_map.clone();
-                    let shutdown_tx = shutdown_tx.clone();
+                    tokio::spawn(async move {
+                        let addr = connection.remote_addr().unwrap_or("0.0.0.0:0".parse().unwrap());
+                        while let Ok(Some(stream)) = connection.accept_bidirectional_stream().await {
+                            let client_server_map = client_server_map.clone();
+                            let shutdown_tx = shutdown_tx.clone();
+                            let drain_tx = drain_tx.clone();
 
+                            tokio::spawn(async move {
+                                let start = chrono::offset::Utc::now().naive_utc();
+                                let client_server_map = client_server_map.clone();
+                                let shutdown = shutdown_tx.subscribe();
+                                let drain = drain_tx.clone();
+                                let (recv, send) = stream.split();
+                                match client_entrypoint_quic(addr, send, recv, client_server_map, shutdown, drain, admin_only, config.general.log_client_connections).await {
+                                    Ok(_) => {
 
-                    tokio::task::spawn(async move {
+                                        let duration = chrono::offset::Utc::now().naive_utc() - start;
 
-                    let conn = match incoming.await {
-                            Ok(stream) => stream,
-                            Err(err) => {
-                                warn!(
-                                    "Can't connect {}: {}",
-                                    addr, err
-                                );
-                                return;
-                            }
-                        };
-
-                        loop {
-                            match conn.accept_bi().await {
-                                Ok((send, recv)) => {
-                                    let client_server_map = client_server_map.clone();
-                                    let shutdown_tx = shutdown_tx.clone();
-                                    let drain_tx = drain_tx.clone();
-                                    let start = chrono::offset::Utc::now().naive_utc();
-                                    let shutdown = shutdown_tx.subscribe();
-                                    tokio::task::spawn(async move {
-                                     match pgcat::client::client_entrypoint_quic(
-                                        addr,
-                                        send,
-                                        recv,
-                                        client_server_map.clone(),
-                                        shutdown,
-                                        drain_tx.clone(),
-                                        admin_only,
-                                        config.general.log_client_connections,
-                                    )
-                                    .await
-
-{
-                            Ok(()) => {
-                                let duration = chrono::offset::Utc::now().naive_utc() - start;
-
-                                if get_config().general.log_client_disconnections {
-                                    info!(
-                                        "Client {:?} disconnected, session duration: {}",
-                                        addr,
-                                        format_duration(&duration)
-                                    );
-                                } else {
-                                    debug!(
-                                        "Client {:?} disconnected, session duration: {}",
-                                        addr,
-                                        format_duration(&duration)
-                                    );
+                                        if get_config().general.log_client_disconnections {
+                                            info!(
+                                                "Client {:?} disconnected, session duration: {}",
+                                                addr,
+                                                format_duration(&duration)
+                                            );
+                                        } else {
+                                            debug!(
+                                                "Client {:?} disconnected, session duration: {}",
+                                                addr,
+                                                format_duration(&duration)
+                                            );
+                                        }
+                                    },
+                                    Err(err) => {
+                                       match err {
+                                            pgcat::errors::Error::ClientBadStartup => debug!("Client disconnected with error {:?}", err),
+                                            _ => warn!("Client disconnected with error {:?}", err),
+                                        }
+                                    },
                                 }
-                            }
+                            });
 
-                            Err(err) => {
-                                match err {
-                                    pgcat::errors::Error::ClientBadStartup => debug!("Client disconnected with error {:?}", err),
-                                    _ => warn!("Client disconnected with error {:?}", err),
-                                }
-
-                            }
                         }
-
-                      });
-
-                      }
-                                Err(err) => {
-                                    warn!(
-                                        "Can't accept any more streams from {}, {}",
-                                        addr, err
-                                    );
-                                    return;
-                                }
-                            };
-                        }
-
-                        // let start = chrono::offset::Utc::now().naive_utc();
-                        // match pgcat::client::client_entrypoint_quic_conn(
-                        //     incoming,
-                        //     client_server_map,
-                        //     shutdown_tx,
-                        //     drain_tx,
-                        //     admin_only,
-                        //     config.general.log_client_connections,
-                        // )
-                        // .await
-                        // {
-                        //     Ok(()) => {
-                        //         let duration = chrono::offset::Utc::now().naive_utc() - start;
-
-                        //         if get_config().general.log_client_disconnections {
-                        //             info!(
-                        //                 "Client {:?} disconnected, session duration: {}",
-                        //                 addr,
-                        //                 format_duration(&duration)
-                        //             );
-                        //         } else {
-                        //             debug!(
-                        //                 "Client {:?} disconnected, session duration: {}",
-                        //                 addr,
-                        //                 format_duration(&duration)
-                        //             );
-                        //         }
-                        //     }
-
-                        //     Err(err) => {
-                        //         match err {
-                        //             pgcat::errors::Error::ClientBadStartup => debug!("Client disconnected with error {:?}", err),
-                        //             _ => warn!("Client disconnected with error {:?}", err),
-                        //         }
-
-                        //     }
-                        // };
                     });
-
-                },
-
+                }
                 new_client = listener.accept() => {
                     let (socket, addr) = match new_client {
                         Ok((socket, addr)) => (socket, addr),

@@ -66,10 +66,6 @@ tcp_keepalives_interval = 5
 # tls_private_key = ".circleci/server.key"
 
 # Path to TLS Certificate file to use for TLS connections
-tls_certificate = "/old-arch/home/ash/Projects/quic-tcp-proxy/certs/cert.pem"
-# Path to TLS private key file to use for TLS connections
-tls_private_key = "/old-arch/home/ash/Projects/quic-tcp-proxy/certs/key.pem"
-
 # Enable/disable server TLS
 server_tls = false
 

@@ -13,3 +13,5 @@ dev/cache
 .venv
 **/__pycache__
 .bundle
+
+certs/*.pem

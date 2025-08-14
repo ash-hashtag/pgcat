@@ -116,16 +116,20 @@ pub struct Client<S, T> {
     extended_protocol_data_buffer: VecDeque<ExtendedProtocolData>,
 }
 
-pub async fn client_entrypoint_quic(
+pub async fn client_entrypoint_quic<S, T>(
     addr: std::net::SocketAddr,
-    mut send: quinn::SendStream,
-    mut recv: quinn::RecvStream,
+    mut send: S,
+    mut recv: T,
     client_server_map: ClientServerMap,
     shutdown: Receiver<()>,
     drain: Sender<i32>,
     admin_only: bool,
     log_client_connections: bool,
-) -> Result<(), Error> {
+) -> Result<(), Error>
+where
+    T: tokio::io::AsyncRead + std::marker::Unpin,
+    S: tokio::io::AsyncWrite + std::marker::Unpin,
+{
     match get_startup(&mut recv).await {
         Ok((ClientConnectionType::Startup, bytes)) => {
             // Continue with regular startup.
