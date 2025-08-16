@@ -10,9 +10,9 @@ admin_username = "admin_user"
 admin_password = "admin_pass"
 
 # Path to TLS Certificate file to use for TLS connections
-tls_certificate = "certs/cert.pem"
+tls_certificate = "/certs/cert.pem"
 # Path to TLS private key file to use for TLS connections
-tls_private_key = "certs/key.pem"
+tls_private_key = "/certs/key.pem"
 
 server_tls = true
 
@@ -27,13 +27,13 @@ primary_reads_enabled = false
 [pools.simple_db.users.0]
 username = "simple_user"
 password = "simple_password"
-pool_size = 10
+pool_size = 100
 # pool_mode = "transaction"
 
 [pools.simple_db.users.1]
 username = "admin_user"
 password = "admin_pass"
-pool_size = 10
+pool_size = 100
 # pool_mode = "transaction"
 
 [pools.simple_db.shards.0]

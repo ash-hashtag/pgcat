@@ -201,50 +201,6 @@ where
         _ => Err(Error::SocketError("Client doesn't need TLS on QUIC".into())),
     }
 }
-pub async fn client_entrypoint_quic_conn(
-    stream: quinn::Incoming,
-    client_server_map: ClientServerMap,
-    shutdown_tx: tokio::sync::broadcast::Sender<()>,
-    drain_tx: Sender<i32>,
-    admin_only: bool,
-    log_client_connections: bool,
-) -> Result<(), Error> {
-    let addr = stream.remote_address();
-    let conn = match stream.await {
-        Ok(stream) => stream,
-        Err(err) => {
-            return Err(Error::SocketError(format!(
-                "Can't connect {}: {}",
-                addr, err
-            )));
-        }
-    };
-
-    loop {
-        match conn.accept_bi().await {
-            Ok((send, recv)) => {
-                let shutdown = shutdown_tx.subscribe();
-                client_entrypoint_quic(
-                    addr,
-                    send,
-                    recv,
-                    client_server_map.clone(),
-                    shutdown,
-                    drain_tx.clone(),
-                    admin_only,
-                    log_client_connections,
-                )
-                .await?;
-            }
-            Err(err) => {
-                return Err(Error::SocketError(format!(
-                    "Can't accept any more streams from {}, {}",
-                    addr, err
-                )));
-            }
-        };
-    }
-}
 
 /// Client entrypoint.
 pub async fn client_entrypoint(

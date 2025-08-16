@@ -280,6 +280,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 },
 
                 new_conn = quic_server.accept() => {
+
                     let mut connection = match new_conn {
                         Some(conn) => conn,
                         None => {
@@ -289,9 +290,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let shutdown_tx = shutdown_tx.clone();
                     let drain_tx = drain_tx.clone();
                     let client_server_map = client_server_map.clone();
+                    let addr = connection.remote_addr().unwrap_or("0.0.0.0:0".parse().unwrap());
+                    log::info!("New QUIC Client: {}", addr);
                     tokio::spawn(async move {
-                        let addr = connection.remote_addr().unwrap_or("0.0.0.0:0".parse().unwrap());
-                        while let Ok(Some(stream)) = connection.accept_bidirectional_stream().await {
+
+                        loop {
+                            let stream = match connection.accept_bidirectional_stream().await {
+                                Ok(Some(stream)) => stream,
+                                Ok(None) => {
+                                    break;
+                                },
+                                Err(err) => {
+                                    error!("QUIC: {}", err);
+                                    break;
+                                },
+                            };
                             let client_server_map = client_server_map.clone();
                             let shutdown_tx = shutdown_tx.clone();
                             let drain_tx = drain_tx.clone();
